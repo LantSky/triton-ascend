@@ -20,6 +20,7 @@ public:
                     uint8_t *deviceBuffer, size_t deviceBufferSize,
                     void *stream,
                     std::function<void(uint8_t *, size_t)> callback) override;
+  std::string getSocName() const override;
 };
 
 } // namespace proton

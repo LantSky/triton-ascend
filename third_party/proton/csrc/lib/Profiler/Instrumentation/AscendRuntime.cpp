@@ -50,6 +50,11 @@ void AscendRuntime::synchronizeStream(void *stream) {
   }
 }
 
+std::string AscendRuntime::getSocName() const {
+  const char *name = aclrtGetSocName();
+  return name ? std::string(name) : std::string();
+}
+
 void AscendRuntime::processHostBuffer(
     uint8_t *hostBuffer, size_t hostBufferSize, uint8_t *deviceBuffer,
     size_t deviceBufferSize, void *stream,

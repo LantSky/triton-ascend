@@ -18,6 +18,7 @@
 #include <queue>
 #include <set>
 #include <stdexcept>
+#include <string>
 
 namespace proton {
 
@@ -113,6 +114,24 @@ getUnitIdVector(const std::map<std::string, std::string> &modeOptions,
 }
 
 } // namespace
+
+int64_t getAscendTimeShiftCost(const Runtime &runtime) {
+  const auto socName = runtime.getSocName();
+
+  // Ascend910_9382 (A3) records the system counter without the legacy
+  // twelve-cycle correction. Applying that correction creates negative trace
+  // durations on A3.
+  if (socName.find("Ascend910_9382") != std::string::npos)
+    return 0;
+
+  // Preserve the correction validated for the legacy 910A/910B names. Other
+  // SoCs remain uncalibrated until they have a platform-specific measurement.
+  if (socName.find("Ascend910A") != std::string::npos ||
+      socName.find("Ascend910B") != std::string::npos)
+    return 12;
+
+  return 0;
+}
 
 std::shared_ptr<ParserConfig>
 InstrumentationProfiler::getParserConfig(uint64_t functionId,
@@ -238,7 +257,9 @@ void InstrumentationProfiler::exitInstrumentedOp(uint64_t streamId,
   }
 
   int64_t timeShiftCost = 0;
-  if (modeOptions.count("optimizations")) {
+  if (runtime->getDeviceType() == DeviceType::ASCEND) {
+    timeShiftCost = getAscendTimeShiftCost(*runtime);
+  } else if (modeOptions.count("optimizations")) {
     auto optimizations = proton::split(modeOptions.at("optimizations"), ",");
     if (std::find(optimizations.begin(), optimizations.end(), "time_shift") !=
         optimizations.end())
