@@ -145,7 +145,7 @@ InstrumentationProfiler::getParserConfig(uint64_t functionId,
         modeOptions.at("granularity") == "GRANULARITY.WARP")) {
     throw std::runtime_error("Only warp granularity is supported for now");
   }
-  config->totalUnits = functionMetadata.at(functionId).getNumWarps();
+  config->totalUnits = functionMetadata.at(functionId).getNumUnits();
   config->numBlocks = bufferSize / config->scratchMemSize;
   config->uidVec = getUnitIdVector(modeOptions, config->totalUnits);
 

@@ -231,24 +231,18 @@ class InstrumentationHook(Hook):
 
         if backend_name == "ascend":
 
+            from triton._C.libtriton import ascend as triton_ascend
+
             def ttir_to_linalg_passes(pm):
-                is_long_clk = False if mode.Optimize.CLOCK32 in self.mode.optimizations else True
-                triton_proton.add_convert_proton_to_protongpu(pm, self.mode.metric_type, self.mode.sampling_strategy,
-                                                              self.mode.sampling_options, self.mode.granularity,
-                                                              self.mode.buffer_strategy, self.mode.buffer_type,
-                                                              self.mode.buffer_size, max_shared_mem,
-                                                              self.profile_buffer_size, self.profile_buffer_alignment,
-                                                              is_long_clk)
-                triton_passes.common.add_cse(pm)
-                # ProtonGPU lowering runs inside the Ascend pass pipeline
-                # (AscendNPU-IR); the GPU-specific passes do not apply.
+                triton_ascend.passes.ttir.add_lower_ascend_proton_to_hivm(pm, self.mode.buffer_size or 4096)
 
             backends[backend_name].compiler.instrumentation = AscendInstrumentation({
-                # Ascend has no ttgir stage; proton passes run at ttir level
-                # inside ttir_to_linalg.
+                "ttir":
+                triton_ascend.passes.ttir.add_assign_ascend_proton_scope_ids,
                 "ttir_to_linalg":
-                lambda pm: ttir_to_linalg_passes(pm),
+                ttir_to_linalg_passes,
             })
+            self.profile_buffer_alignment = 64
         else:
             backends[backend_name].compiler.instrumentation = Instrumentation({
                 "ttgpuir_to_llvmir":

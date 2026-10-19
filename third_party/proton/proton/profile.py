@@ -17,9 +17,6 @@ def _select_backend() -> str:
         return "cupti"
     elif backend == "hip":
         return "roctracer"
-    elif backend == "npu":
-        # No CUPTI/roctracer equivalent on Ascend NPU.
-        return "instrumentation"
     else:
         raise ValueError("No backend is available for the current target.")
 
@@ -83,7 +80,7 @@ def start(
         backend (str, optional): The backend to use for profiling.
                                  Available options are [None, "cupti", "roctracer", "instrumentation"].
                                  Defaults to None, which automatically selects the backend matching the current active runtime.
-                                 On Ascend NPU targets this resolves to "instrumentation".
+                                 On Ascend NPU, explicitly select backend="instrumentation".
         mode (Union[str, BaseMode], optional): The "mode" to use for profiling, which is specific to the backend.
                                                Can be a string or an instance of BaseMode (or any subclass thereof).
                                                Defaults to None.

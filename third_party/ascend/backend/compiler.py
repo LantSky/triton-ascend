@@ -320,6 +320,8 @@ def make_ttir(mod, metadata, opt):
     passes.ttir.add_loop_unroll(pm)
     if opt.enable_graph_optimize:
         ascend.passes.ttir.add_graph_optimize(pm, **_graph_optimize_kwargs(opt))
+    if AscendBackend.instrumentation:
+        AscendBackend.instrumentation.patch("ttir", pm, mod.context)
     pm.run(mod, 'make_ttir')
     if opt.debug:
         dump_manager = get_dump_manager(metadata["hash"])
@@ -380,10 +382,6 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=True):
         ascend.passes.ttir.add_discrete_mask_access_conversion(pm, compile_on_910_95, compile_mode)
         ascend.passes.ttir.add_triton_to_annotation(pm)
         ascend.passes.ttir.add_triton_to_unstructure(pm, compile_on_910_95, compile_mode)
-        # Proton instrumentation patch point (mirrors CUDABackend). Ascend
-        # has no ttgir stage, so proton passes run at TTIR level here.
-        if AscendBackend.instrumentation:
-            AscendBackend.instrumentation.patch("ttir_to_linalg", pm, mod.context)
         ascend.passes.ttir.add_triton_to_hivm(pm)
         ascend.passes.ttir.add_triton_to_hfusion(pm, compile_on_910_95)
         ascend.passes.ttir.add_triton_to_llvm(pm)
@@ -409,6 +407,9 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=True):
             # Keep the existing default-on buffer insertion behavior.
             ascend.passes.ttir.set_enable_buffer_insert_optimization(mod)
             ascend.passes.ttir.add_dynamic_cv_pipeline(pm, compile_on_910_95)
+
+        if AscendBackend.instrumentation:
+            AscendBackend.instrumentation.patch("ttir_to_linalg", pm, mod.context)
 
         if _enable_msdebug():
             ascend.passes.ttir.add_normalize_debug_line_locations(pm)
@@ -440,6 +441,11 @@ def ttir_to_linalg(mod, metadata, opt, *, named_ops=True):
             print(f"[DEBUG] cmd list: {shlex.join(cmd)}")
 
         pm.run(mod, 'ttir_to_linalg')
+        for key in ("profile_scratch_size", "profile_scratch_align", "profile_num_units", "profile_sections_per_block",
+                    "profile_sample_every_n"):
+            match = re.search(rf"\b{key}\s*=\s*(\d+)", str(mod))
+            if match:
+                metadata[key] = int(match.group(1))
         _adjust_metadata_by_module_result(mod, metadata, opt, enable_mixed_cv=enable_mixed_cv,
                                           disable_auto_inject_block_sync=disable_auto_inject_block_sync,
                                           set_workspace_multibuffer=set_workspace_multibuffer)

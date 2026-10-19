@@ -219,9 +219,10 @@ class NPULauncher(object):
         spec.loader.exec_module(mod)
         cst_key = lambda i: self.src.fn.arg_names.index(i) if isinstance(i, str) else i
         signature = {cst_key(key): value for key, value in self.src.signature.items()}
-        # The pure-SIMT launch ABI inserts a profile_scratch base argument
+        # SIMT and instrumented vector launchers carry a profile buffer
         # (see NPULauncher.__call__) between `function` and `packed_metadata`.
-        base_args_len = _BASE_ARGS_FORMAT_LEN + (1 if metadata.is_pure_simt else 0)
+        base_args_len = _BASE_ARGS_FORMAT_LEN + (1 if metadata.is_pure_simt
+                                                 or int(getattr(metadata, "profile_scratch_size", 0) or 0) > 0 else 0)
         self.launch = wrap_handle_tensordesc(getattr(mod, "launch"), signature, base_args_len)
         # 0 keeps the profile scratch path inert until the proton lowering
         # pass backfills the real size.
@@ -250,8 +251,10 @@ class NPULauncher(object):
             return
         # Proton profile scratch, allocated through the runtime profile
         # allocator and passed as an explicit launch argument, mirroring
-        # CudaLauncher. Only the pure-SIMT ABI has a profile_scratch slot.
-        if self.metadata.is_pure_simt:
+        # CudaLauncher. Vector kernels receive the buffer before grid arguments.
+        if self.metadata.is_pure_simt or self.profile_scratch_size > 0:
+            if min(gridX, gridY, gridZ) <= 0:
+                return
             profile_scratch = None
             if self.profile_scratch_size > 0:
                 grid_size = gridX * gridY * gridZ
@@ -954,15 +957,16 @@ def make_launcher(constants, signature, metadata):
         _flatten_signature(sig, flat_signature)
     signature = {i: s for i, s in enumerate(flat_signature)}
     args_list = ', ' + ', '.join(f"&_arg{i}" for i, ty in signature.items()) if len(signature) > 0 else ''
-    # The pure-SIMT launch ABI carries an extra profile_scratch base argument
+    # SIMT and instrumented vector launchers accept a hidden profile buffer
     # (a PyObject accepted by getPointer) right after `function`.
-    simt_profile_scratch_arg = metadata.is_pure_simt
-    base_args_len = _BASE_ARGS_FORMAT_LEN + (1 if simt_profile_scratch_arg else 0)
-    # Per-block proton profile scratch size, backfilled by AscendNPU-IR.
+    profile_enabled = int(getattr(metadata, "profile_scratch_size", 0) or 0) > 0
+    has_profile_scratch_arg = metadata.is_pure_simt or profile_enabled
+    base_args_len = _BASE_ARGS_FORMAT_LEN + (1 if has_profile_scratch_arg else 0)
+    # Per-block Proton profile scratch size exported by Ascend lowering.
     profile_scratch_size = int(getattr(metadata, "profile_scratch_size", 0) or 0)
     # Positional indices of the base arguments in launch()'s METH_FASTCALL
     # args array.
-    idx_packed_metadata = 5 + (1 if simt_profile_scratch_arg else 0)
+    idx_packed_metadata = 5 + (1 if has_profile_scratch_arg else 0)
     # Total expected argument count for METH_FASTCALL arity check.
     total_nargs = base_args_len + len(signature)
     # Generate manual parsing statements for signature args (indices 9.., or
@@ -980,9 +984,9 @@ def make_launcher(constants, signature, metadata):
         elif ty != "constexpr":
             internal_args_list.append(f"_arg{i}")
 
-    # Pure-SIMT ABI only: convert the profile_scratch PyObject passed by
+    # Convert the allocator-owned profile buffer passed by
     # NPULauncher.__call__ into a device pointer and zero-initialize it.
-    if simt_profile_scratch_arg:
+    if has_profile_scratch_arg:
         cpp_profile_scratch_setup = f"""
   void* profile_scratch_ptr = nullptr;
   if (profile_scratch_obj != Py_None) {{
@@ -1447,6 +1451,7 @@ void triton_launch_kernel(const char* kernelName, cann_func_handle func, cann_st
            kernelName, gridX, gridY, gridZ);
     return;
   }}
+  {'fputs("Instrumented Ascend kernels require the Python Proton launcher.", stderr); return;' if profile_enabled else ''}
   std::vector<std::vector<int64_t>> tensorShapes;
   if (shapes_data != nullptr && shape_dims != nullptr) {{
     int shapes_idx = 0;
@@ -1528,7 +1533,7 @@ void triton_launch_kernel(const char* kernelName, cann_func_handle func, cann_st
 
 static void _launch(const char* kernelName, cann_func_handle func, cann_stream stream,
     int gridX, int gridY, int gridZ,
-    std::vector<std::vector<int64_t>> &tensorShapes, std::vector<int> &tensorKinds{', void* profile_scratch_ptr' if simt_profile_scratch_arg else ''}{(', ' + arg_decls) if len(arg_decls) > 0 else ''}) {{
+    std::vector<std::vector<int64_t>> &tensorShapes, std::vector<int> &tensorKinds{', void* profile_scratch_ptr' if has_profile_scratch_arg else ''}{(', ' + arg_decls) if len(arg_decls) > 0 else ''}) {{
   // Keep Python launcher on the stable local packing path.
   if (gridX <=0 || gridY <=0 || gridZ <=0) {{
     printf("WARNING: Skipping launch for kernel '%s' due to empty grid (gridX=%d, gridY=%d, gridZ=%d).\\n", kernelName, gridX, gridY, gridZ);
@@ -1541,6 +1546,7 @@ static void _launch(const char* kernelName, cann_func_handle func, cann_stream s
       {'void* syncBlockLock __attribute__((aligned(8)));' if not metadata.is_pure_simt else ''}
       {'void* workspace_addr __attribute__((aligned(8)));' if not metadata.is_pure_simt else ''}
       {' '.join(f'{ty_to_cpp(ty)} arg{i} __attribute__((aligned({4 if ty[0] != "*" and ty[-2:] != "64" else 8})));' for i, ty in signature.items() if ty != "constexpr")}
+      {'void* profile_buffer __attribute__((aligned(8)));' if profile_enabled and not metadata.is_pure_simt else ''}
 {original_grid_struct_fields}      {' '.join(f'{ty_to_cpp(ty)} grid{mark} __attribute__((aligned(4)));' for mark, ty in grid_info.items())}
       {'void* global_scratch __attribute__((aligned(8)));' if metadata.is_pure_simt else ''}
       {'void* profile_scratch __attribute__((aligned(8)));' if metadata.is_pure_simt else ''}
@@ -1552,6 +1558,7 @@ static void _launch(const char* kernelName, cann_func_handle func, cann_stream s
       {(lambda _rt: (', '.join(_rt) + ',') if _rt else '')(
         [f'static_cast<{ty_to_cpp(ty)}>(arg{i})' for i, ty in signature.items() if ty != "constexpr"]
       )}
+      {'static_cast<void*>(profile_scratch_ptr),' if profile_enabled and not metadata.is_pure_simt else ''}
 {original_grid_struct_values}      {', '.join(f'static_cast<{ty_to_cpp(ty)}>(grid{mark})' for mark, ty in grid_info.items())}
       {'// global_scratch stays nullptr; only profile_scratch is wired here.' if metadata.is_pure_simt else ''}
       {', static_cast<void*>(nullptr)' if metadata.is_pure_simt else ''}
@@ -1570,7 +1577,7 @@ static PyObject* launch(PyObject* self, PyObject* const* args, Py_ssize_t nargs)
   PyObject *launch_metadata = nullptr;
   PyObject *launch_enter_hook = nullptr;
   PyObject *launch_exit_hook = nullptr;
-  {'PyObject *profile_scratch_obj = nullptr;' if simt_profile_scratch_arg else ''}
+  {'PyObject *profile_scratch_obj = nullptr;' if has_profile_scratch_arg else ''}
   std::vector<std::vector<int64_t>> tensorShapes;
 
   {newline.join([f"{_extracted_type(ty)} _arg{i};" for i, ty in signature.items()])}
@@ -1586,7 +1593,7 @@ static PyObject* launch(PyObject* self, PyObject* const* args, Py_ssize_t nargs)
   gridZ = (int)PyLong_AsLong(args[2]);
   stream = reinterpret_cast<cann_stream>(PyLong_AsUnsignedLongLong(args[3]));
   function = reinterpret_cast<cann_func_handle>(PyLong_AsUnsignedLongLong(args[4]));
-  {'profile_scratch_obj = args[5];' if simt_profile_scratch_arg else ''}
+  {'profile_scratch_obj = args[5];' if has_profile_scratch_arg else ''}
   packedMetadata = args[{idx_packed_metadata}];
   launch_metadata = args[{idx_packed_metadata + 1}];
   launch_enter_hook = args[{idx_packed_metadata + 2}];
@@ -1640,7 +1647,7 @@ static PyObject* launch(PyObject* self, PyObject* const* args, Py_ssize_t nargs)
   _launch(kernelName, function, stream,
           gridX, gridY, gridZ,
           tensorShapes, tensorKinds
-          {', profile_scratch_ptr' if simt_profile_scratch_arg else ''}
+          {', profile_scratch_ptr' if has_profile_scratch_arg else ''}
           {', ' + ', '.join(internal_args_list) if len(internal_args_list) > 0 else ''});
   if (PyErr_Occurred()) {{
     return nullptr;
