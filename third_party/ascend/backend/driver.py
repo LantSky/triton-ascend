@@ -247,6 +247,16 @@ class NPULauncher(object):
                 return
             scratch = _allocation._profile_allocator.get()(
                 gridX * gridY * gridZ * self.profile_scratch_size, self.profile_scratch_align, stream)
+            exit_hook = args[8]
+            if exit_hook is not None:
+                def synchronized_exit(launch_metadata):
+                    # CANN stream synchronization alone does not drain Torch-NPU's
+                    # host task queue. Complete submission before Proton reads
+                    # the profile buffer from the launch-exit callback.
+                    get_backend_func("get_device_interface").synchronize()
+                    return exit_hook(launch_metadata)
+
+                args = (*args[:8], synchronized_exit, *args[9:])
             profiler_registered = self.launch(*args, scratch, **kwargs)
         else:
             profiler_registered = self.launch(*args, **kwargs)
