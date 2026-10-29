@@ -470,9 +470,7 @@ def _get_ascend_cmake_args():
 def _get_ascend_proton_cmake_args():
     """Return CANN include arguments for the optional Proton NPU build."""
     ascend_include_dir = os.getenv("ASCEND_INCLUDE_DIR", "")
-    if ascend_include_dir and not os.path.exists(
-        os.path.join(ascend_include_dir, "acl", "acl.h")
-    ):
+    if ascend_include_dir and not os.path.exists(os.path.join(ascend_include_dir, "acl", "acl.h")):
         ascend_include_dir = ""
 
     if not ascend_include_dir:
@@ -481,8 +479,8 @@ def _get_ascend_proton_cmake_args():
             ascend_home = os.getenv("ASCEND_TOOLKIT_HOME", "")
         if ascend_home:
             for candidate in (
-                os.path.join(ascend_home, "include"),
-                os.path.join(ascend_home, "runtime", "include"),
+                    os.path.join(ascend_home, "include"),
+                    os.path.join(ascend_home, "runtime", "include"),
             ):
                 if os.path.exists(os.path.join(candidate, "acl", "acl.h")):
                     ascend_include_dir = candidate

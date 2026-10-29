@@ -245,10 +245,11 @@ class NPULauncher(object):
             gridX, gridY, gridZ, stream = args[:4]
             if min(gridX, gridY, gridZ) <= 0:
                 return
-            scratch = _allocation._profile_allocator.get()(
-                gridX * gridY * gridZ * self.profile_scratch_size, self.profile_scratch_align, stream)
+            scratch = _allocation._profile_allocator.get()(gridX * gridY * gridZ * self.profile_scratch_size,
+                                                           self.profile_scratch_align, stream)
             exit_hook = args[8]
             if exit_hook is not None:
+
                 def synchronized_exit(launch_metadata):
                     # CANN stream synchronization alone does not drain Torch-NPU's
                     # host task queue. Complete submission before Proton reads

@@ -187,7 +187,8 @@ static cann_error execute(Invocation &call) {
   if (spec.profile_scratch_size) {
     void *profile = nullptr;
     std::memcpy(&profile, call.data() + layout.profile, sizeof(profile));
-    const auto bytes = checkedMultiply(spec.profile_scratch_size, call.grid.logicalBlocks);
+    const auto bytes =
+        checkedMultiply(spec.profile_scratch_size, call.grid.logicalBlocks);
     auto ret = cann_memset_async(profile, bytes, 0, bytes, call.stream);
     if (ret != CANN_SUCCESS)
       return ret;

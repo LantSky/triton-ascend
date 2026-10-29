@@ -35,7 +35,8 @@ class Spec(ct.Structure):
                 ("workspace_size", ct.c_uint64), ("ordered_locks", ct.c_uint64), ("unordered_locks", ct.c_uint64),
                 ("lock_init_value", ct.c_int64), ("participant_factor", ct.c_uint32), ("physical_blocks", ct.c_uint32),
                 ("coalesce_factor", ct.c_uint32), ("coalesce_axis", ct.c_int32), ("task_type", ct.c_uint32),
-                ("mix_ratio", ct.c_uint32), ("shared_mem_dynamic_size", ct.c_uint32), ("profile_scratch_size", ct.c_uint64)]
+                ("mix_ratio", ct.c_uint32), ("shared_mem_dynamic_size", ct.c_uint32),
+                ("profile_scratch_size", ct.c_uint64)]
 
 
 class ArgType(ct.Structure):

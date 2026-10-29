@@ -1114,8 +1114,8 @@ def test_proton_profile_size_is_carried_in_launch_plan(policy, size):
 
 def test_proton_scratch_follows_expanded_user_arguments():
     calls = []
-    wrapped = launcher.wrap_handle_tensordesc(lambda *args: calls.append(args),
-                                             {0: ("i32", "i64")}, profile_scratch=True)
+    wrapped = launcher.wrap_handle_tensordesc(lambda *args: calls.append(args), {0: ("i32", "i64")},
+                                              profile_scratch=True)
     prefix = tuple(range(9))
     scratch = object()
     wrapped(*prefix, (11, 13), scratch)
